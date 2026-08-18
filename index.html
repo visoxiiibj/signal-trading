@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Signal Multi-Unités de Temps</title>
+<meta name="theme-color" content="#0B0E11" />
+<link rel="manifest" href="manifest.json" />
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background:#0B0E11; font-family: -apple-system, system-ui, sans-serif; }
+  ::-webkit-scrollbar { width:6px; }
+  ::-webkit-scrollbar-thumb { background:#232935; border-radius:3px; }
+  .panel { background:#12161C; border:1px solid #232935; border-radius:16px; }
+  .fadein { animation: fadein .25s ease; }
+  @keyframes fadein { from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:translateY(0)} }
+</style>
+</head>
+<body class="text-[#D7DCE2] min-h-screen">
+
+<div class="max-w-2xl mx-auto p-4 pb-24">
+
+  <div class="mb-5">
+    <h1 class="text-2xl font-bold text-white tracking-tight">Signal multi-unités de temps</h1>
+    <p class="text-sm text-[#8B95A1] mt-1">Daily / H4 / H1 — lecture combinée de 5 approches techniques</p>
+  </div>
+
+  <!-- API key panel -->
+  <div id="keyPanel" class="panel p-4 mb-4">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-sm font-semibold text-white">Clé API Anthropic</span>
+    </div>
+    <p class="text-xs text-[#8B95A1] mb-2">Stockée uniquement sur ce téléphone (jamais envoyée ailleurs qu'à l'API Anthropic). Récupère-la sur console.anthropic.com → API Keys.</p>
+    <input id="apiKey" type="password" placeholder="sk-ant-..." class="w-full bg-[#0B0E11] border border-[#232935] rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:ring-2 focus:ring-[#00D9A3]/40" />
+    <button onclick="saveKey()" class="mt-2 px-4 py-2 rounded-lg bg-[#1B212B] border border-[#232935] text-xs font-medium hover:border-[#00D9A3]/50 transition">Enregistrer la clé</button>
+    <span id="keyStatus" class="text-xs ml-2 text-[#00D9A3]"></span>
+  </div>
+
+  <!-- Upload panel -->
+  <div class="panel p-4 mb-4">
+    <div class="flex gap-3 mb-4" id="uploadSlots"></div>
+    <button onclick="analyze()" id="analyzeBtn" class="w-full px-5 py-2.5 rounded-lg bg-[#00D9A3] text-[#0B0E11] text-sm font-semibold hover:opacity-90 transition disabled:opacity-50">
+      Analyser les graphiques
+    </button>
+    <div id="errorBox" class="hidden mt-3 text-sm text-[#FF5C5C]"></div>
+  </div>
+
+  <!-- Risk panel -->
+  <div class="panel p-4 mb-4">
+    <span class="text-sm font-semibold text-white block mb-3">Gestion du risque</span>
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label class="text-xs text-[#8B95A1] block mb-1">Capital ($)</label>
+        <input id="capital" type="number" value="10000" oninput="recompute()" class="w-full bg-[#0B0E11] border border-[#232935] rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:ring-2 focus:ring-[#00D9A3]/40" />
+      </div>
+      <div>
+        <label class="text-xs text-[#8B95A1] block mb-1">Risque/trade (%)</label>
+        <input id="riskPct" type="number" step="0.1" value="1" oninput="recompute()" class="w-full bg-[#0B0E11] border border-[#232935] rounded-lg px-3 py-2 text-sm font-mono text-white focus:outline-none focus:ring-2 focus:ring-[#00D9A3]/40" />
+      </div>
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="panel p-4 mt-4">
+    <p class="text-xs text-[#8B95A1] leading-relaxed">
+      ⚠️ Aucune méthode ne prédit avec certitude le prochain mouvement d'un indice synthétique — c'est un modèle mathématique aléatoire calibré, sans lien avec un marché réel. Ce signal combine plusieurs approches techniques reconnues pour structurer ta décision et gérer ton risque : ce n'est ni une garantie de gain, ni un conseil financier personnalisé. Vérifie toujours les niveaux sur ton graphique en direct avant d'agir.
+    </p>
+  </div>
+
+</div>
+
+<script>
+const TIMEFRAMES = [
+  { key:"daily", label:"Daily", weight:3, hint:"Biais de fond" },
+  { key:"h4", label:"H4", weight:2, hint:"Confirmation" },
+  { key:"h1", label:"H1", weight:1, hint:"Timing d'entrée" },
+];
+
+let images = {}; // key -> {data, mediaType}
+let lastReadings = null;
+
+function saveKey(){
+  const val = document.getElementById('apiKey').value.trim();
+  if(val){ localStorage.setItem('anthropic_api_key', val); document.getElementById('keyStatus').textContent = 'Clé enregistrée ✓'; }
+}
+window.onload = () => {
+  const stored = localStorage.getItem('anthropic_api_key');
+  if(stored){ document.getElementById('apiKey').value = stored; document.getElementById('keyStatus').textContent = 'Clé chargée ✓'; }
+  renderSlots();
+};
+
+function renderSlots(){
+  const container = document.getElementById('uploadSlots');
+  container.innerHTML = '';
+  TIMEFRAMES.forEach(t => {
+    const div = document.createElement('div');
+    div.className = 'flex-1 min-w-0';
+    const has = images[t.key];
+    div.innerHTML = `
+      <div class="bg-[#0B0E11] border border-[#232935] rounded-xl p-2">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-xs font-semibold text-white">${t.label}</span>
+        </div>
+        ${has ? `
+          <div class="relative">
+            <img src="${has.preview}" class="w-full h-20 object-cover rounded-lg" />
+            <button onclick="clearImg('${t.key}')" class="absolute top-1 right-1 bg-black/70 rounded-full w-5 h-5 text-white text-xs">✕</button>
+          </div>
+        ` : `
+          <label class="flex flex-col items-center justify-center h-20 border-2 border-dashed border-[#232935] rounded-lg cursor-pointer">
+            <span class="text-[10px] text-[#4A5361]">+ Ajouter</span>
+            <input type="file" accept="image/*" class="hidden" onchange="handleFile('${t.key}', this.files[0])" />
+          </label>
+        `}
+      </div>`;
+    container.appendChild(div);
+  });
+}
+
+function clearImg(key){ delete images[key]; renderSlots(); document.getElementById('results').innerHTML=''; }
+
+function handleFile(key, file){
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const base64 = dataUrl.split(',')[1];
+    images[key] = { data: base64, mediaType: file.type || 'image/png', preview: dataUrl };
+    renderSlots();
+    document.getElementById('results').innerHTML = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+const SYSTEM_PROMPT = `Tu es un analyste technique. On te montre 1 à 3 captures de graphiques de trading (indices synthétiques ou autres), chacune associée à une unité de temps (Daily, H4 ou H1).
+Pour CHAQUE image fournie, analyse uniquement ce qui est visuellement observable (bougies, moyennes mobiles si tracées, forme du prix, niveaux ronds testés plusieurs fois) et réponds UNIQUEMENT avec un objet JSON valide, sans texte avant ni après, sans balises markdown, au format exact suivant (un objet par image, dans un tableau) :
+
+[
+  {
+    "timeframe": "daily" | "h4" | "h1",
+    "trend": "haussier" | "baissier" | "neutre",
+    "trend_strength": 1 to 5,
+    "momentum": "haussier" | "baissier" | "neutre" | "indetermine",
+    "volatility": "faible" | "moderee" | "elevee",
+    "structure_note": "courte description de la structure de prix",
+    "approx_last_price": number or null,
+    "approx_key_support": number or null,
+    "approx_key_resistance": number or null,
+    "confidence": 1 to 5
+  }
+]
+Sois honnête sur l'incertitude : si un niveau n'est pas clairement lisible, mets null. N'invente pas de valeurs précises non visibles.`;
+
+async function analyze(){
+  const key = localStorage.getItem('anthropic_api_key');
+  const errBox = document.getElementById('errorBox');
+  errBox.classList.add('hidden');
+
+  if(!key){ showError('Ajoute ta clé API Anthropic en haut de la page.'); return; }
+  const provided = TIMEFRAMES.filter(t => images[t.key]);
+  if(provided.length === 0){ showError('Ajoute au moins une image de graphique.'); return; }
+
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true; btn.textContent = 'Analyse en cours...';
+
+  try{
+    const content = [{ type:'text', text: SYSTEM_PROMPT + "\n\nImages fournies dans l'ordre : " + provided.map(t=>t.label).join(', ') + '.' }];
+    provided.forEach(t => {
+      content.push({ type:'text', text: `Image suivante = unité de temps ${t.label}.` });
+      content.push({ type:'image', source:{ type:'base64', media_type: images[t.key].mediaType, data: images[t.key].data } });
+    });
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key': key,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true'
+      },
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1000, messages:[{ role:'user', content }] })
+    });
+    const data = await resp.json();
+    if(data.error){ throw new Error(data.error.message || 'Erreur API'); }
+    const textBlock = (data.content||[]).map(b=>b.text||'').join('\n');
+    const cleaned = textBlock.replace(/```json|```/g,'').trim();
+    lastReadings = JSON.parse(cleaned);
+    recompute();
+  }catch(e){
+    showError("Impossible d'analyser les images (" + e.message + "). Vérifie ta clé API et réessaie.");
+  }finally{
+    btn.disabled = false; btn.textContent = 'Analyser les graphiques';
+  }
+}
+
+function showError(msg){
+  const box = document.getElementById('errorBox');
+  box.textContent = msg; box.classList.remove('hidden');
+}
+
+function recompute(){
+  if(!lastReadings) return;
+  const capital = Number(document.getElementById('capital').value) || 0;
+  const riskPct = Number(document.getElementById('riskPct').value) || 0;
+  const dirMap = { haussier:1, baissier:-1, neutre:0, indetermine:0 };
+
+  let weighted=0, totalWeight=0;
+  const rows = [];
+  lastReadings.forEach(r => {
+    const tf = TIMEFRAMES.find(t => t.key===r.timeframe) || TIMEFRAMES.find(t => r.timeframe && r.timeframe.includes(t.key));
+    const weight = tf ? tf.weight : 1;
+    const trendVal = dirMap[r.trend] ?? 0;
+    const momVal = dirMap[r.momentum] ?? 0;
+    const combined = trendVal*0.65 + momVal*0.35;
+    weighted += combined*weight*(r.trend_strength||3)/5;
+    totalWeight += weight;
+    rows.push({...r, tfLabel: tf?tf.label:r.timeframe, weight});
+  });
+  const normalized = totalWeight>0 ? weighted/totalWeight : 0;
+  const score = Math.round(((normalized+1)/2)*100);
+
+  let signal='ATTENDRE', color='#F0B90B';
+  if(score>=65){ signal='ACHAT (BUY)'; color='#00D9A3'; }
+  else if(score<=35){ signal='VENTE (SELL)'; color='#FF5C5C'; }
+
+  const daily = rows.find(r=>r.tfLabel==='Daily');
+  const h1 = rows.find(r=>r.tfLabel==='H1');
+  const divergence = daily && h1 && daily.trend!=='neutre' && h1.trend!=='neutre' && daily.trend!==h1.trend;
+
+  const priceRow = rows.find(r=>r.approx_last_price!=null) || rows[0];
+  const entry = priceRow?.approx_last_price ?? null;
+  const support = rows.map(r=>r.approx_key_support).find(v=>v!=null) ?? null;
+  const resistance = rows.map(r=>r.approx_key_resistance).find(v=>v!=null) ?? null;
+
+  let stopDistance=null, stopLevel=null, targetLevel=null;
+  if(entry!=null){
+    if(signal==='ACHAT (BUY)' && support!=null){
+      stopDistance = Math.abs(entry-support); stopLevel = support;
+      targetLevel = resistance!=null ? resistance : entry + stopDistance*2;
+    } else if(signal==='VENTE (SELL)' && resistance!=null){
+      stopDistance = Math.abs(resistance-entry); stopLevel = resistance;
+      targetLevel = support!=null ? support : entry - stopDistance*2;
+    }
+  }
+  const riskAmount = (capital*riskPct)/100;
+  const positionUnits = stopDistance && stopDistance>0 ? riskAmount/stopDistance : null;
+  const avgVol = rows.map(r=>r.volatility).filter(Boolean);
+  const highVol = avgVol.filter(v=>v==='elevee').length >= Math.ceil(avgVol.length/2);
+
+  renderResults({rows, score, signal, color, divergence, entry, stopLevel, targetLevel, riskAmount, positionUnits, highVol, capital, riskPct});
+}
+
+function renderResults(s){
+  const el = document.getElementById('results');
+  const dirIcon = s.signal==='ACHAT (BUY)' ? '▲' : s.signal==='VENTE (SELL)' ? '▼' : '—';
+  let html = `
+    <div class="panel p-5 mb-4 fadein">
+      <div class="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <span class="text-xs text-[#8B95A1] block mb-1">Signal combiné</span>
+          <div class="flex items-center gap-2 text-2xl font-bold" style="color:${s.color}">${dirIcon} ${s.signal}</div>
+        </div>
+        <div class="text-right">
+          <span class="text-xs text-[#8B95A1] block mb-1">Score de confluence</span>
+          <span class="text-2xl font-bold font-mono" style="color:${s.color}">${s.score}/100</span>
+        </div>
+      </div>
+      ${s.divergence ? `<div class="flex items-center gap-2 mt-3 text-xs text-[#F0B90B] bg-[#F0B90B]/10 border border-[#F0B90B]/20 rounded-lg p-2">⚠️ Daily et H1 en désaccord — signal moins fiable, prudence.</div>` : ''}
+      ${s.highVol ? `<div class="flex items-center gap-2 mt-2 text-xs text-[#8B95A1] bg-[#1B212B] rounded-lg p-2">ℹ️ Volatilité élevée — élargis ton stop pour éviter une sortie prématurée.</div>` : ''}
+    </div>
+
+    <div class="panel p-5 mb-4 fadein">
+      <span class="text-sm font-semibold text-white block mb-3">Lecture par unité de temps</span>
+      <div class="space-y-3">
+        ${s.rows.map(r => `
+          <div class="bg-[#0B0E11] border border-[#232935] rounded-xl p-3">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-sm font-semibold text-white">${r.tfLabel}</span>
+              <span class="text-xs font-semibold" style="color:${r.trend==='haussier'?'#00D9A3':r.trend==='baissier'?'#FF5C5C':'#8B95A1'}">
+                ${r.trend==='haussier'?'Haussier':r.trend==='baissier'?'Baissier':'Neutre'} · force ${r.trend_strength}/5
+              </span>
+            </div>
+            <p class="text-xs text-[#8B95A1]">${r.structure_note||''}</p>
+            <p class="text-[10px] text-[#4A5361] mt-1">Momentum : ${r.momentum} · Volatilité : ${r.volatility} · Fiabilité : ${r.confidence}/5</p>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  if(s.entry!=null && s.stopLevel!=null){
+    html += `
+      <div class="panel p-5 mb-4 fadein">
+        <span class="text-sm font-semibold text-white block mb-3">Cadre de trade — capital $${s.capital.toLocaleString()}</span>
+        <div class="grid grid-cols-2 gap-3 text-xs font-mono">
+          <div class="bg-[#0B0E11] rounded-lg p-3"><span class="text-[#4A5361] block mb-1">Entrée approx.</span><span class="text-white text-sm">${s.entry.toFixed(2)}</span></div>
+          <div class="bg-[#FF5C5C]/10 border border-[#FF5C5C]/20 rounded-lg p-3"><span class="text-[#FF5C5C] block mb-1">Stop</span><span class="text-white text-sm">${s.stopLevel.toFixed(2)}</span></div>
+          <div class="bg-[#00D9A3]/10 border border-[#00D9A3]/20 rounded-lg p-3"><span class="text-[#00D9A3] block mb-1">Objectif</span><span class="text-white text-sm">${s.targetLevel?s.targetLevel.toFixed(2):'—'}</span></div>
+          <div class="bg-[#0B0E11] rounded-lg p-3"><span class="text-[#4A5361] block mb-1">Risque en $</span><span class="text-white text-sm">$${s.riskAmount.toFixed(2)}</span></div>
+        </div>
+        <p class="text-[10px] text-[#4A5361] mt-3">Taille de position ≈ ${s.positionUnits?s.positionUnits.toFixed(3):'—'} unités/point pour respecter ${s.riskPct}% de risque sur $${s.capital.toLocaleString()}. Vérifie ces niveaux sur ton graphique en direct.</p>
+      </div>
+    `;
+  } else {
+    html += `<div class="panel p-5 mb-4 text-xs text-[#8B95A1] fadein">ℹ️ Niveaux pas assez lisibles pour un stop/objectif précis — utilise une image plus nette avec l'échelle de prix visible.</div>`;
+  }
+
+  el.innerHTML = html;
+}
+</script>
+</body>
+</html>

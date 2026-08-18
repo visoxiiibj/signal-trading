@@ -1,0 +1,15 @@
+{
+  "name": "Signal Multi-Timeframe",
+  "short_name": "Signal TF",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0B0E11",
+  "theme_color": "#0B0E11",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
